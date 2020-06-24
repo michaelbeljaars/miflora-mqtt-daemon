@@ -22,8 +22,9 @@
 #    wirenboard-mqtt -  Publish to the Wiren Board MQTT broker
 #                       (https://wirenboard.com)
 #                json - Print to stdout as json encoded strings
+#	     influxdb - Directly output to influxdb database
 #
-#reporting_method = mqtt-json
+reporting_method = influxdb
 
 # The bluetooth adapter that should be used to connect to Mi Flora devices (Default: hci0)
 #adapter = hci0
@@ -31,10 +32,10 @@
 [Daemon]
 
 # Enable or Disable an endless execution loop (Default: true)
-#enabled = true
+enabled = true
 
 # The period between two measurements in seconds (Default: 300)
-#period = 300
+period = 900
 
 [MQTT]
 
@@ -51,7 +52,7 @@
 
 # The MQTT base topic to publish all Mi Flora sensor data topics under.
 # Default depends on the configured reporting_method
-#base_topic = miflora                   # Default for: mqtt-json, mqtt-smarthome, homeassistant-mqtt
+base_topic = miflora                   # Default for: mqtt-json, mqtt-smarthome, homeassistant-mqtt
 #base_topic = homie                     # Default for: mqtt-homie
 #base_topic = v1/devices/me/telemetry   # Default for: thingsboard-json
 #base_topic =                           # Default for: wirenboard-mqtt
@@ -76,6 +77,24 @@
 # Path to TLS client auth certificate file
 #tls_certfile =
 
+[InfluxDB]
+
+# The hostname or IP address of the InfluxDB server to connect to (Default: localhost)
+#hostname = localhost
+
+# The TCP port InfluxDB is listening on (Default: 8086)
+#port = 8086
+
+# The InfluxDB authentification credentials
+#username = admin
+#password = 
+
+# The name of the  database that is to be used for the connection (Default: miflora)
+#database = miflora
+
+# Number of retries sending data to InfluxDB (Default: 3)
+#maxretries = 3
+
 [Sensors]
 
 # Add your Mi Flora sensors here. Each sensor consists of a name and a Ethernet MAC address.
@@ -88,3 +107,4 @@
 #Schefflera@Living = C4:7C:8D:11:22:33
 #JapaneseBonsai    = C4:7C:8D:44:55:66
 #Petunia@Balcony   = C4:7C:8D:77:88:99
+ 

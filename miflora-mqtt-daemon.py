@@ -6,6 +6,7 @@ import re
 import json
 import os.path
 import argparse
+import subprocess
 from time import time, sleep, localtime, strftime
 from collections import OrderedDict
 from colorama import init as colorama_init
@@ -15,6 +16,7 @@ from unidecode import unidecode
 from miflora.miflora_poller import MiFloraPoller, MI_BATTERY, MI_CONDUCTIVITY, MI_LIGHT, MI_MOISTURE, MI_TEMPERATURE
 from btlewrap import BluepyBackend, GatttoolBackend, BluetoothBackendException
 from bluepy.btle import BTLEException
+from influxdb import InfluxDBClient
 import paho.mqtt.client as mqtt
 import sdnotify
 from signal import signal, SIGPIPE, SIG_DFL
@@ -111,6 +113,8 @@ elif reporting_mode == 'thingsboard-json':
     default_base_topic = 'v1/devices/me/telemetry'
 elif reporting_mode == 'wirenboard-mqtt':
     default_base_topic = ''
+elif reporting_mode == 'influxdb':
+    default_base_topic = 'miflora'
 else:
     default_base_topic = 'miflora'
 
@@ -120,7 +124,7 @@ sleep_period = config['Daemon'].getint('period', 300)
 miflora_cache_timeout = sleep_period - 1
 
 # Check configuration
-if reporting_mode not in ['mqtt-json', 'mqtt-homie', 'json', 'mqtt-smarthome', 'homeassistant-mqtt', 'thingsboard-json', 'wirenboard-mqtt']:
+if reporting_mode not in ['mqtt-json', 'mqtt-homie', 'json', 'mqtt-smarthome', 'homeassistant-mqtt', 'thingsboard-json', 'wirenboard-mqtt','influxdb']:
     print_line('Configuration parameter reporting_mode set to an invalid value', error=True, sd_notify=True)
     sys.exit(1)
 if not config['Sensors']:
@@ -174,7 +178,21 @@ if reporting_mode in ['mqtt-json', 'mqtt-homie', 'mqtt-smarthome', 'homeassistan
         if reporting_mode != 'thingsboard-json':
             mqtt_client.loop_start()
             sleep(1.0) # some slack to establish the connection
-
+            
+elif reporting_mode == 'influxdb':
+    try:
+        client = InfluxDBClient(
+                    config['InfluxDB'].get('hostname', 'localhost'),
+                    int(config['InfluxDB'].get('port', '8086')),
+                    config['InfluxDB'].get('username', 'admin'),
+                    config['InfluxDB'].get('password', None),
+                    config['InfluxDB'].get('database', 'default')
+                 )
+        maxretries = int(config['InfluxDB'].get('maxretries', 3))
+    except:
+        print_line('InfluxDB connection error. Please check your settings in the configuration file "config.ini"', error=True, sd_notify=True)
+        sys.exit(1)
+        
 sd_notifier.notify('READY=1')
 
 # Initialize Mi Flora sensors
@@ -316,6 +334,8 @@ print_line('Initialization complete, starting MQTT publish loop', console=False,
 
 # Sensor data retrieval and publication
 while True:
+    avg_temp = 0
+    avg_number = 0
     for [flora_name, flora] in flores.items():
         data = OrderedDict()
         attempts = 2
@@ -348,7 +368,7 @@ while True:
             flora['stats']['success'] += 1
 
         for param,_ in parameters.items():
-            data[param] = flora['poller'].parameter_value(param)
+            data[param] = float(flora['poller'].parameter_value(param))
         print_line('Result: {}'.format(json.dumps(data)))
 
         if reporting_mode == 'mqtt-json':
@@ -392,14 +412,51 @@ while True:
             data['mac'] = flora['mac']
             data['firmware'] = flora['firmware']
             print('Data for "{}": {}'.format(flora_name, json.dumps(data)))
+        elif reporting_mode == 'influxdb':
+            avg_temp = avg_temp + data['temperature']
+            avg_number += 1
+            payload = dict()
+            #payload['time'] = strftime('%Y-%m-%dT%H:%M:%SZ', localtime())
+            payload['measurement'] = flora_name
+            payload['fields'] = data
+            print('Data for "{}": {}'.format(flora_name, json.dumps(payload)))
+            json_body = [payload, ]
+            attempt = 0
+            while attempt < maxretries:
+                try:
+                    client.write_points(json_body)
+                    attempt = maxretries
+                except:
+                    print('Failed to send data to InfluxDB')
+                    attempt = attempt + 1
         else:
             raise NameError('Unexpected reporting_mode.')
         print()
-
+        
+    if reporting_mode == 'influxdb':
+        payload = dict()
+        payload['measurement'] = 'Average'
+        if avg_number > 0:
+            payload['fields'] = {'temperature': avg_temp/avg_number}
+            print(avg_number)
+            print('Data for "{}": {}'.format('Average', json.dumps(payload)))
+            json_body = [payload, ]
+            attempt = 0
+            while attempt < maxretries:
+                try:
+                    client.write_points(json_body)
+                    attempt = maxretries
+                except:
+                    print('Failed to send data to InfluxDB')
+                    attempt = attempt + 1
+        
     print_line('Status messages published', console=False, sd_notify=True)
 
     if daemon_enabled:
         print_line('Sleeping ({} seconds) ...'.format(sleep_period))
+        #process = subprocess.Popen(['sudo','hciconfig','hci0','reset'], stdout=subprocess.PIPE)
+        #output, error = process.communicate()
+        #print(error)
         sleep(sleep_period)
         print()
     else:
